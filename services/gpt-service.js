@@ -1,10 +1,8 @@
-require('colors');
-const EventEmitter = require('events');
 const OpenAI = require('openai');
+const moment = require('moment-timezone');
+const EventEmitter = require('events');
 const tools = require('../functions/function-manifest');
 
-// Import all functions included in function manifest
-// Note: the function name and file name must be the same
 const availableFunctions = {};
 tools.forEach((tool) => {
   let functionName = tool.function.name;
@@ -14,124 +12,185 @@ tools.forEach((tool) => {
 class GptService extends EventEmitter {
   constructor() {
     super();
-    this.openai = new OpenAI();
+    this.openai = new OpenAI({
+        apiKey: process.env.GROQ_API_KEY,
+        baseURL: "https://api.groq.com/openai/v1"
+    });
     this.userContext = [
-      { 'role': 'system', 'content': 'You are an outbound sales representative selling Apple Airpods. You have a youthful and cheery personality. Keep your responses as brief as possible but make every attempt to keep the caller on the phone without being rude. Don\'t ask more than 1 question at a time. Don\'t make assumptions about what values to plug into functions. Ask for clarification if a user request is ambiguous. Speak out all prices to include the currency. Please help them decide between the airpods, airpods pro and airpods max by asking questions like \'Do you prefer headphones that go in your ear or over the ear?\'. If they are trying to choose between the airpods and airpods pro try asking them if they need noise canceling. Once you know which model they would like ask them how many they would like to purchase and try to get them to place an order. You must add a \'•\' symbol every 5 to 10 words at natural pauses where your response can be split for text to speech.' },
-      { 'role': 'assistant', 'content': 'Hello! I understand you\'re looking for a pair of AirPods, is that correct?' },
-    ],
+      { 
+        "role": "system", 
+        "content": `You are Josh, an assistant at Manchester Airport Parking. Follow these steps EXACTLY:
+    
+        1. Car Registration Confirmation:
+           - When a customer provides a registration number, repeat it back EXACTLY.
+           - Ask "Is that correct?" and wait for confirmation before proceeding.
+           - Do NOT proceed until the customer confirms the registration.
+    
+        2. Booking Verification:
+           - Use findBooking function to retrieve details.
+           - Confirm customer name, booking time (12-hour format), terminal, and contact number.
+           - DO NOT mention the allocated car park at this stage.
+    
+        3. ETA Update:
+           - Ask for the customer's estimated time of arrival.
+           - If they give a relative time (e.g., "20 minutes"), calculate the actual time.
+           - Confirm the final ETA with the customer.
+           - Use updateETA function to update the booking.
+    
+        4. Provide Instructions:
+           - ONLY AFTER updating ETA, provide clear directions on arrival location, including car park and level.
+    
+        5. Notify Management:
+           - Use whatsappMessage function to notify the manager.
+           - Don't inform the customer about this message.
+    
+        Maintain a professional, friendly tone. Use '•' for natural pauses. Don't use emojis.
+    
+        IMPORTANT: Always follow this exact order. Do not skip steps or provide information out of order.`
+      },
+      { 
+        "role": "assistant", 
+        "content": `Hi! This is Manchester Airport Parking. How can I help you with your booking today?` 
+      },
+    ];
     this.partialResponseIndex = 0;
+    this.etaConfirmed = false;
+    this.lastRegistration = null;
+    this.transcriptionBuffer = '';
+    this.processingTranscription = false;
   }
 
-  // Add the callSid to the chat context in case
-  // ChatGPT decides to transfer the call.
-  setCallSid (callSid) {
+  getCurrentTime() {
+    return moment().tz('Europe/London').format('h:mm A [BST]');
+  }
+
+  setCallSid(callSid) {
     this.userContext.push({ 'role': 'system', 'content': `callSid: ${callSid}` });
   }
 
-  validateFunctionArgs (args) {
-    try {
-      return JSON.parse(args);
-    } catch (error) {
-      console.log('Warning: Double function arguments returned by OpenAI:', args);
-      // Seeing an error where sometimes we have two sets of args
-      if (args.indexOf('{') != args.lastIndexOf('{')) {
-        return JSON.parse(args.substring(args.indexOf(''), args.indexOf('}') + 1));
+  updateUserContext(name, role, content) {
+    if (typeof content !== 'string') {
+      content = JSON.stringify(content, null, 2);
+    }
+    if (name !== 'user') {
+      this.userContext.push({ role, name, content });
+    } else {
+      this.userContext.push({ role, content });
+    }
+  }
+
+  async handleTranscription(transcription, isFinal) {
+    this.transcriptionBuffer += ' ' + transcription;
+    
+    if (isFinal || this.transcriptionBuffer.trim().length > 100) {  // Process if final or buffer is long enough
+      if (!this.processingTranscription) {
+        this.processingTranscription = true;
+        await this.processTranscription();
+        this.processingTranscription = false;
       }
     }
   }
-
-  updateUserContext(name, role, text) {
-    if (name !== 'user') {
-      this.userContext.push({ 'role': role, 'name': name, 'content': text });
-    } else {
-      this.userContext.push({ 'role': role, 'content': text });
+  async processTranscription() {
+    const fullTranscription = this.transcriptionBuffer.trim();
+    if (fullTranscription) {
+      await this.completion(fullTranscription, this.partialResponseIndex, 'user');
+      this.transcriptionBuffer = '';
     }
   }
-
   async completion(text, interactionCount, role = 'user', name = 'user') {
     this.updateUserContext(name, role, text);
-
-    // Step 1: Send user transcription to Chat GPT
-    const stream = await this.openai.chat.completions.create({
-      model: 'gpt-4-1106-preview',
+  
+    const response = await this.openai.chat.completions.create({
+      model: 'llama3-groq-70b-8192-tool-use-preview',
       messages: this.userContext,
       tools: tools,
-      stream: true,
+      tool_choice: 'auto',
     });
-
-    let completeResponse = '';
-    let partialResponse = '';
-    let functionName = '';
-    let functionArgs = '';
-    let finishReason = '';
-
-    function collectToolInformation(deltas) {
-      let name = deltas.tool_calls[0]?.function?.name || '';
-      if (name != '') {
-        functionName = name;
-      }
-      let args = deltas.tool_calls[0]?.function?.arguments || '';
-      if (args != '') {
-        // args are streamed as JSON string so we need to concatenate all chunks
-        functionArgs += args;
-      }
-    }
-
-    for await (const chunk of stream) {
-      let content = chunk.choices[0]?.delta?.content || '';
-      let deltas = chunk.choices[0].delta;
-      finishReason = chunk.choices[0].finish_reason;
-
-      // Step 2: check if GPT wanted to call a function
-      if (deltas.tool_calls) {
-        // Step 3: Collect the tokens containing function data
-        collectToolInformation(deltas);
-      }
-
-      // need to call function on behalf of Chat GPT with the arguments it parsed from the conversation
-      if (finishReason === 'tool_calls') {
-        // parse JSON string of args into JSON object
-
-        const functionToCall = availableFunctions[functionName];
-        const validatedArgs = this.validateFunctionArgs(functionArgs);
-        
-        // Say a pre-configured message from the function manifest
-        // before running the function.
-        const toolData = tools.find(tool => tool.function.name === functionName);
-        const say = toolData.function.say;
-
-        this.emit('gptreply', {
-          partialResponseIndex: null,
-          partialResponse: say
-        }, interactionCount);
-
-        let functionResponse = await functionToCall(validatedArgs);
-
-        // Step 4: send the info on the function call and function response to GPT
-        this.updateUserContext(functionName, 'function', functionResponse);
-        
-        // call the completion function again but pass in the function response to have OpenAI generate a new assistant response
-        await this.completion(functionResponse, interactionCount, 'function', functionName);
-      } else {
-        // We use completeResponse for userContext
-        completeResponse += content;
-        // We use partialResponse to provide a chunk for TTS
-        partialResponse += content;
-        // Emit last partial response and add complete response to userContext
-        if (content.trim().slice(-1) === '•' || finishReason === 'stop') {
-          const gptReply = { 
-            partialResponseIndex: this.partialResponseIndex,
-            partialResponse
-          };
-
-          this.emit('gptreply', gptReply, interactionCount);
-          this.partialResponseIndex++;
-          partialResponse = '';
+  
+    const responseMessage = response.choices[0].message;
+    let toolCalls = responseMessage.tool_calls;
+  
+    // Check if tool calls are embedded in the content
+    if (!toolCalls && responseMessage.content.includes('<tool_call>')) {
+      const toolCallMatch = responseMessage.content.match(/<tool_call>([\s\S]*?)<\/tool_call>/);
+      if (toolCallMatch) {
+        try {
+          toolCalls = [JSON.parse(toolCallMatch[1])];
+        } catch (error) {
+          console.error('Error parsing embedded tool call:', error);
         }
       }
     }
-    this.userContext.push({'role': 'assistant', 'content': completeResponse});
-    console.log(`GPT -> user context length: ${this.userContext.length}`.green);
+
+    if (toolCalls && toolCalls.length > 0) {
+      for (const toolCall of toolCalls) {
+        const functionName = toolCall.name || toolCall.function?.name;
+        const functionToCall = availableFunctions[functionName];
+        let functionArgs = toolCall.arguments || toolCall.function?.arguments;
+  
+        if (typeof functionArgs === 'string') {
+          try {
+            functionArgs = JSON.parse(functionArgs);
+          } catch (error) {
+            console.error('Error parsing function arguments:', error);
+            functionArgs = {};
+          }
+        }
+  
+        try {
+          const functionResponse = await functionToCall(functionArgs);
+          this.updateUserContext(functionName, 'function', functionResponse);
+        } catch (error) {
+          console.error(`Error calling function ${functionName}:`, error);
+          this.updateUserContext(functionName, 'function', JSON.stringify({ error: error.message }));
+        }
+      }
+  
+      // Make a second API call with the updated context
+      const secondResponse = await this.openai.chat.completions.create({
+        model: 'llama3-groq-70b-8192-tool-use-preview',
+        messages: this.userContext,
+      });
+  
+      this.handleResponse(secondResponse.choices[0].message, interactionCount);
+    } else {
+      this.handleResponse(responseMessage, interactionCount);
+    }
+  }
+
+  handleResponse(responseMessage, interactionCount) {
+    console.log('Response message:', JSON.stringify(responseMessage, null, 2));
+  
+    const response = responseMessage.content;
+  
+    if (typeof response !== 'string') {
+      console.error('Unexpected response format:', response);
+      return;
+    }
+  
+    let partialResponse = '';
+    for (const char of response) {
+      partialResponse += char;
+      if (char === '•' || char === '.') {
+        this.emit('gptreply', {
+          partialResponseIndex: this.partialResponseIndex,
+          partialResponse
+        }, interactionCount);
+        this.partialResponseIndex++;
+        partialResponse = '';
+      }
+    }
+  
+    if (partialResponse) {
+      this.emit('gptreply', {
+        partialResponseIndex: this.partialResponseIndex,
+        partialResponse
+      }, interactionCount);
+      this.partialResponseIndex++;
+    }
+  
+    this.userContext.push({ 'role': 'assistant', 'content': response });
+    console.log(`GPT -> user context length: ${this.userContext.length}`);
   }
 }
 

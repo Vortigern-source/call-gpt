@@ -3,7 +3,6 @@ const { createClient, LiveTranscriptionEvents } = require('@deepgram/sdk');
 const { Buffer } = require('node:buffer');
 const EventEmitter = require('events');
 
-
 class TranscriptionService extends EventEmitter {
   constructor() {
     super();
@@ -19,7 +18,10 @@ class TranscriptionService extends EventEmitter {
     });
 
     this.finalResult = '';
-    this.speechFinal = false; // used to determine if we have seen speech_final=true indicating that deepgram detected a natural pause in the speakers speech. 
+    this.speechFinal = false;
+    this.lastSpeechTime = Date.now();
+    this.silenceThreshold = 2000; // 1 second of silence
+    this.silenceTimer = null;
 
     this.dgConnection.on(LiveTranscriptionEvents.Open, () => {
       this.dgConnection.on(LiveTranscriptionEvents.Transcript, (transcriptionEvent) => {
@@ -29,33 +31,35 @@ class TranscriptionService extends EventEmitter {
           text = alternatives[0]?.transcript;
         }
         
-        // if we receive an UtteranceEnd and speech_final has not already happened then we should consider this the end of of the human speech and emit the transcription
         if (transcriptionEvent.type === 'UtteranceEnd') {
-          if (!this.speechFinal) {
+          if (!this.speechFinal && this.finalResult.trim().length > 0) {
             console.log(`UtteranceEnd received before speechFinal, emit the text collected so far: ${this.finalResult}`.yellow);
             this.emit('transcription', this.finalResult);
-            return;
+            this.finalResult = '';
+            this.speechFinal = false;
           } else {
-            console.log('STT -> Speech was already final when UtteranceEnd recevied'.yellow);
-            return;
+            console.log('STT -> Speech was already final when UtteranceEnd received'.yellow);
           }
+          return;
         }
     
-        // console.log(text, "is_final: ", transcription?.is_final, "speech_final: ", transcription.speech_final);
-        // if is_final that means that this chunk of the transcription is accurate and we need to add it to the finalResult 
         if (transcriptionEvent.is_final === true && text.trim().length > 0) {
           this.finalResult += ` ${text}`;
-          // if speech_final and is_final that means this text is accurate and it's a natural pause in the speakers speech. We need to send this to the assistant for processing
+          this.lastSpeechTime = Date.now();
+          this.resetSilenceTimer();
+
           if (transcriptionEvent.speech_final === true) {
-            this.speechFinal = true; // this will prevent a utterance end which shows up after speechFinal from sending another response
+            this.speechFinal = true;
+            console.log(`Speech final received, emitting transcription: ${this.finalResult}`.yellow);
             this.emit('transcription', this.finalResult);
             this.finalResult = '';
-          } else {
-            // if we receive a message without speechFinal reset speechFinal to false, this will allow any subsequent utteranceEnd messages to properly indicate the end of a message
-            this.speechFinal = false;
           }
         } else {
           this.emit('utterance', text);
+          if (text.trim().length > 0) {
+            this.lastSpeechTime = Date.now();
+            this.resetSilenceTimer();
+          }
         }
       });
 
@@ -78,6 +82,24 @@ class TranscriptionService extends EventEmitter {
         console.log('STT -> Deepgram connection closed'.yellow);
       });
     });
+  }
+
+  resetSilenceTimer() {
+    if (this.silenceTimer) {
+      clearTimeout(this.silenceTimer);
+    }
+    this.silenceTimer = setTimeout(() => {
+      this.handleSilence();
+    }, this.silenceThreshold);
+  }
+
+  handleSilence() {
+    if (Date.now() - this.lastSpeechTime >= this.silenceThreshold && this.finalResult.trim().length > 0) {
+      console.log(`Silence detected, emitting transcription: ${this.finalResult}`.yellow);
+      this.emit('transcription', this.finalResult);
+      this.finalResult = '';
+      this.speechFinal = false;
+    }
   }
 
   /**

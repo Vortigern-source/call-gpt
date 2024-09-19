@@ -30,6 +30,14 @@ app.post('/incoming', (req, res) => {
   }
 });
 
+const findBooking = require('./functions/findBooking');
+
+app.get('/test-booking', async (req, res) => {
+  const registration = req.query.registration || 'V50SJO';  // Use query param or default
+  const bookingDetails = await findBooking({ registration });
+  res.json(JSON.parse(bookingDetails));
+});
+
 app.ws('/connection', (ws) => {
   try {
     ws.on('error', console.error);
@@ -37,6 +45,7 @@ app.ws('/connection', (ws) => {
     let streamSid;
     let callSid;
 
+    // Use updated GptService
     const gptService = new GptService();
     const streamService = new StreamService(ws);
     const transcriptionService = new TranscriptionService();
@@ -58,7 +67,11 @@ app.ws('/connection', (ws) => {
         // Set RECORDING_ENABLED='true' in .env to record calls
         recordingService(ttsService, callSid).then(() => {
           console.log(`Twilio -> Starting Media Stream for ${streamSid}`.underline.red);
-          ttsService.generate({partialResponseIndex: null, partialResponse: 'Hello! I understand you\'re looking for a pair of AirPods, is that correct?'}, 0);
+          // Update this line to make it dynamic to the use case you're handling, e.g., registration.
+          ttsService.generate({
+            partialResponseIndex: null, 
+            partialResponse: 'Hi, This is Manchester Airport Parking, how can I help you?'
+          }, 0);
         });
       } else if (msg.event === 'media') {
         transcriptionService.send(msg.media.payload);
@@ -87,7 +100,20 @@ app.ws('/connection', (ws) => {
     transcriptionService.on('transcription', async (text) => {
       if (!text) { return; }
       console.log(`Interaction ${interactionCount} – STT -> GPT: ${text}`.yellow);
-      gptService.completion(text, interactionCount);
+      
+      // Capture registration if provided
+      const regExp = /registration number is (\w+)/i;
+      const match = text.match(regExp);
+      
+      if (match) {
+        console.log('Detected car registration:', match[1]);
+        // Pass this to the GPT service which now handles car registration flows.
+        gptService.completion(text, interactionCount);
+      } else {
+        // Default behavior for other inputs
+        gptService.completion(text, interactionCount);
+      }
+      
       interactionCount += 1;
     });
     
@@ -95,9 +121,9 @@ app.ws('/connection', (ws) => {
       console.log(`Interaction ${icount}: GPT -> TTS: ${gptReply.partialResponse}`.green );
       ttsService.generate(gptReply, icount);
     });
-  
+   
     ttsService.on('speech', (responseIndex, audio, label, icount) => {
-      console.log(`Interaction ${icount}: TTS -> TWILIO: ${label}`.blue);
+      console.log(`Interaction ${icount}: TTS -> PHONE: ${label}`.blue);
   
       streamService.buffer(responseIndex, audio);
     });

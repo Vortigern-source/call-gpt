@@ -1,124 +1,134 @@
 // create metadata for all the available functions to pass to completions API
 const tools = [
   {
-    type: 'function',
+    type: "function",
     function: {
-      name: 'checkInventory',
-      say: 'Let me check our inventory right now.',
-      description: 'Check the inventory of airpods, airpods pro or airpods max.',
+      name: "findBooking",
+      say: "Give me a moment while I find your booking details.",
+      description: "Find booking details based on car registration number.",
       parameters: {
-        type: 'object',
+        type: "object",
         properties: {
-          model: {
-            type: 'string',
-            'enum': ['airpods', 'airpods pro', 'airpods max'],
-            description: 'The model of airpods, either the airpods, airpods pro or airpods max',
-          },
+          registration: {
+            type: "string",
+            description: "Car registration number"
+          }
         },
-        required: ['model'],
+        required: ["registration"]
       },
       returns: {
-        type: 'object',
+        type: "object",
         properties: {
-          stock: {
-            type: 'integer',
-            description: 'An integer containing how many of the model are in currently in stock.'
+          terminal: {
+            type: "string",
+            description: "Terminal number"
+          },
+          bookingTime: {
+            type: "string",
+            description: "Booking time"
+          },
+          contactNumber: {
+            type: "string",
+            description: "Contact number"
+          },
+          allocatedCarPark: {
+            type: "string",
+            description: "Allocated car park"
+          },
+          error: {
+            type: "string",
+            description: "Error message if no booking found or in case of a problem"
           }
         }
       }
-    },
+    }
   },
   {
-    type: 'function',
+    type: "function",
     function: {
-      name: 'checkPrice',
-      say: 'Let me check the price, one moment.',
-      description: 'Check the price of given model of airpods, airpods pro or airpods max.',
+      name: "updateETA",
+      say: "I'll update the estimated ETA so our drivers can get there on time",
+      description: "Update the estimated time of arrival (ETA) for a booking in Airtable.",
       parameters: {
-        type: 'object',
+        type: "object",
         properties: {
-          model: {
-            type: 'string',
-            'enum': ['airpods', 'airpods pro', 'airpods max'],
-            description: 'The model of airpods, either the airpods, airpods pro or airpods max',
+          registration: {
+            type: "string",
+            description: "Car registration number"
           },
+          customerETA: {
+            type: "string",
+            description: "Customer's estimated time of arrival."
+          },
+          currentTime: {
+            type: "string",
+            description: "Current time in HH:mm format"
+          }
         },
-        required: ['model'],
+        required: ["registration", "customerETA", "currentTime"]
       },
       returns: {
-        type: 'object',
+        type: "object",
         properties: {
-          price: {
-            type: 'integer',
-            description: 'the price of the model'
+          success: {
+            type: "string",
+            description: "Success message if the ETA was updated successfully"
+          },
+          updatedRecord: {
+            type: "object",
+            description: "The updated record from Airtable"
+          },
+          formattedETA: {
+            type: "string",
+            description: "Formatted ETA string"
+          },
+          error: {
+            type: "string",
+            description: "Error message if the update failed or no booking was found"
           }
         }
       }
-    },
+    }
   },
   {
-    type: 'function',
+    type: "function",
     function: {
-      name: 'placeOrder',
-      say: 'All right, I\'m just going to ring that up in our system.',
-      description: 'Places an order for a set of airpods.',
+      name: "whatsappMessage",
+      say: "A driver will be assigned soon.",
+      description: "Sends a WhatsApp message to the manager group with booking details for driver assignment.",
       parameters: {
-        type: 'object',
+        type: "object",
         properties: {
-          model: {
-            type: 'string',
-            'enum': ['airpods', 'airpods pro'],
-            description: 'The model of airpods, either the regular or pro',
-          },
-          quantity: {
-            type: 'integer',
-            description: 'The number of airpods they want to order',
-          },
+          registration: {
+            type: "string",
+            description: "Vehicle registration number"
+          }
         },
-        required: ['type', 'quantity'],
+        required: ["registration"]
       },
       returns: {
-        type: 'object',
+        type: "object",
         properties: {
-          price: {
-            type: 'integer',
-            description: 'The total price of the order including tax'
+          success: {
+            type: "string",
+            description: "Success message if the notification was sent successfully"
           },
-          orderNumber: {
-            type: 'integer',
-            description: 'The order number associated with the order.'
+          messageId: {
+            type: "string",
+            description: "The ID of the sent WhatsApp message"
+          },
+          error: {
+            type: "string",
+            description: "Error message if the notification failed to send"
+          },
+          details: {
+            type: "string",
+            description: "Additional error details if available"
           }
         }
       }
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'transferCall',
-      say: 'One moment while I transfer your call.',
-      description: 'Transfers the customer to a live agent in case they request help from a real person.',
-      parameters: {
-        type: 'object',
-        properties: {
-          callSid: {
-            type: 'string',
-            description: 'The unique identifier for the active phone call.',
-          },
-        },
-        required: ['callSid'],
-      },
-      returns: {
-        type: 'object',
-        properties: {
-          status: {
-            type: 'string',
-            description: 'Whether or not the customer call was successfully transfered'
-          },
-        }
-      }
-    },
-  },
+    }
+  }
 ];
 
 module.exports = tools;
