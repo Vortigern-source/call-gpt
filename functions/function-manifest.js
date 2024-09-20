@@ -128,6 +128,51 @@ const tools = [
         }
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'transferCall',
+      say: 'One moment while I transfer your call to the right department',
+      description: 'Transfers the customer to a live agent for general complaints and queries.',
+      parameters: {
+        type: 'object',
+        properties: {
+          callSid: {
+            type: 'string',
+            description: 'The unique identifier for the active phone call.',
+          },
+        },
+        required: ['callSid'],
+      },
+      returns: {
+        type: 'object',
+        properties: {
+          status: {
+            type: 'string',
+            description: 'Whether or not the customer call was successfully transfered'
+          },
+        }
+      }
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "findBookingByPhone",
+      say: "Let me check if we have a booking associated with your phone number.",
+      description: "Find booking details based on the customer's phone number.",
+      parameters: {
+        type: "object",
+        properties: {
+          phoneNumber: {
+            type: "string",
+            description: "Customer's phone number"
+          }
+        },
+        required: ["phoneNumber"]
+      }
+    }
   }
 ];
 

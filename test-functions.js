@@ -2,50 +2,36 @@ require('dotenv').config();
 const findBooking = require('./functions/findBooking');
 const updateETA = require('./functions/updateETA');
 const whatsappMessage = require('./functions/whatsappMessage');
+const findBookingByPhone = require('./functions/findBookingByPhone');
 
-const registration = 'HN16YLM';
+const registration = 'YA19KXT';
+const phoneNumber = '07921653420'; // Replace this with a valid phone number from your database
 
-async function runTests() {
-  try {
-    // Test findBooking
-    console.log("Testing findBooking...");
-    const bookingResult = await findBooking({ registration });
-    console.log("findBooking result:", JSON.parse(bookingResult));
+async function testFunctions() {
+  // Test findBookingByPhone
+  console.log('Testing findBookingByPhone...');
+  const bookingByPhoneResult = await findBookingByPhone({ phoneNumber });
+  console.log('findBookingByPhone result:', bookingByPhoneResult);
 
-    // Test updateETA
-    console.log("\nTesting updateETA...");
-    const currentTime = new Date().toLocaleTimeString('en-GB', { hour12: false, hour: '2-digit', minute: '2-digit' });
-    const updateETAResult = await updateETA({ 
-      registration, 
-      customerETA: "16:30", 
-      currentTime: currentTime 
-    });
-    console.log("updateETA result:", updateETAResult);
+  // Test findBooking
+  console.log('\nTesting findBooking...');
+  const bookingResult = await findBooking({ registration });
+  console.log('findBooking result:', bookingResult);
 
-    // Test whatsappMessage
-    console.log("\nTesting whatsappMessage...");
-    const whatsappResult = await whatsappMessage({ registration });
-    console.log("whatsappMessage result:", whatsappResult);
+  // Test updateETA
+  console.log('\nTesting updateETA...');
+  const etaResult = await updateETA({ registration, customerETA: '2 hours' });
+  console.log('updateETA result:', etaResult);
 
-    // Test error handling
-    console.log("\nTesting error handling...");
-    const invalidReg = 'INVALID123';
-    const errorBookingResult = await findBooking({ registration: invalidReg });
-    console.log("findBooking with invalid registration:", JSON.parse(errorBookingResult));
+  // Test updateETA with specific time
+  console.log('\nTesting updateETA with specific time...');
+  const etaResult2 = await updateETA({ registration, customerETA: '3:30 PM' });
+  console.log('updateETA result (specific time):', etaResult2);
 
-    const errorUpdateETAResult = await updateETA({ 
-      registration: invalidReg, 
-      customerETA: "16:30", 
-      currentTime: currentTime 
-    });
-    console.log("updateETA with invalid registration:", errorUpdateETAResult);
-
-    const errorWhatsappResult = await whatsappMessage({ registration: invalidReg });
-    console.log("whatsappMessage with invalid registration:", errorWhatsappResult);
-
-  } catch (error) {
-    console.error("An error occurred during testing:", error);
-  }
+  // Test whatsappMessage
+  console.log('\nTesting whatsappMessage...');
+  const whatsappResult = await whatsappMessage({ registration });
+  console.log('whatsappMessage result:', whatsappResult);
 }
 
-runTests().then(() => console.log("All tests completed."));
+testFunctions().then(() => console.log("\nAll tests completed."));

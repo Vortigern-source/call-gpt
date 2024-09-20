@@ -21,7 +21,8 @@ app.post('/incoming', (req, res) => {
   try {
     const response = new VoiceResponse();
     const connect = response.connect();
-    connect.stream({ url: `wss://${process.env.SERVER}/connection` });
+    const stream = connect.stream({ url: `wss://${process.env.SERVER}/connection` });
+    stream.parameter({ name: 'callerPhoneNumber', value: '{{From}}' });
   
     res.type('text/xml');
     res.end(response.toString());
@@ -30,22 +31,13 @@ app.post('/incoming', (req, res) => {
   }
 });
 
-const findBooking = require('./functions/findBooking');
-
-app.get('/test-booking', async (req, res) => {
-  const registration = req.query.registration || 'V50SJO';  // Use query param or default
-  const bookingDetails = await findBooking({ registration });
-  res.json(JSON.parse(bookingDetails));
-});
-
 app.ws('/connection', (ws) => {
   try {
     ws.on('error', console.error);
-    // Filled in from start message
     let streamSid;
     let callSid;
+    let callerPhoneNumber;
 
-    // Use updated GptService
     const gptService = new GptService();
     const streamService = new StreamService(ws);
     const transcriptionService = new TranscriptionService();
@@ -60,25 +52,26 @@ app.ws('/connection', (ws) => {
       if (msg.event === 'start') {
         streamSid = msg.start.streamSid;
         callSid = msg.start.callSid;
+        callerPhoneNumber = msg.start.customParameters?.callerPhoneNumber;
         
         streamService.setStreamSid(streamSid);
         gptService.setCallSid(callSid);
 
+        // Add the caller's phone number to the GPT context
+        if (callerPhoneNumber) {
+          gptService.updateUserContext('system', 'system', `Caller's phone number: ${callerPhoneNumber}`);
+        }
+
         // Set RECORDING_ENABLED='true' in .env to record calls
         recordingService(ttsService, callSid).then(() => {
           console.log(`Twilio -> Starting Media Stream for ${streamSid}`.underline.red);
-          // Update this line to make it dynamic to the use case you're handling, e.g., registration.
           ttsService.generate({
             partialResponseIndex: null, 
-            partialResponse: 'Hi, This is Manchester Airport Parking, how can I help you?'
+            partialResponse: 'Hi! This is Manchester Airport Parking. Are you calling to collect a parked car or drop off a car for parking?'
           }, 0);
         });
       } else if (msg.event === 'media') {
         transcriptionService.send(msg.media.payload);
-      } else if (msg.event === 'mark') {
-        const label = msg.mark.name;
-        console.log(`Twilio -> Audio completed mark (${msg.sequenceNumber}): ${label}`.red);
-        marks = marks.filter(m => m !== msg.mark.name);
       } else if (msg.event === 'stop') {
         console.log(`Twilio -> Media stream ${streamSid} ended.`.underline.red);
       }
@@ -100,25 +93,13 @@ app.ws('/connection', (ws) => {
     transcriptionService.on('transcription', async (text) => {
       if (!text) { return; }
       console.log(`Interaction ${interactionCount} – STT -> GPT: ${text}`.yellow);
-      
-      // Capture registration if provided
-      const regExp = /registration number is (\w+)/i;
-      const match = text.match(regExp);
-      
-      if (match) {
-        console.log('Detected car registration:', match[1]);
-        // Pass this to the GPT service which now handles car registration flows.
-        gptService.completion(text, interactionCount);
-      } else {
-        // Default behavior for other inputs
-        gptService.completion(text, interactionCount);
-      }
-      
+      gptService.completion(text, interactionCount);
       interactionCount += 1;
     });
     
+    
     gptService.on('gptreply', async (gptReply, icount) => {
-      console.log(`Interaction ${icount}: GPT -> TTS: ${gptReply.partialResponse}`.green );
+      console.log(`Interaction ${icount}: LLM -> TTS: ${gptReply.partialResponse}`.green );
       ttsService.generate(gptReply, icount);
     });
    
